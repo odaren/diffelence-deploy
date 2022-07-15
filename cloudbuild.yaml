@@ -1,0 +1,48 @@
+steps:
+# 過去のコミット履歴を表示させる
+  - name: gcr.io/cloud-builders/git
+    args:
+      - fetch
+      - '--unshallow'
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        # 前回成功したコミットを見つける
+        nth_successful_commit() {
+          local n=$1  
+          local trigger_name=$2
+          local project=$3
+          local trigger_id=$4
+
+          local build_find_limit=50
+         
+          local nth_successful_build=$(gcloud builds list --filter "buildTriggerId=$trigger_id AND STATUS=(SUCCESS)" --format "value(id)" --limit=$build_find_limit --project $project | awk "NR==$n") || exit 1
+
+          local nth_successful_commit=$(gcloud builds describe $nth_successful_build --format "value(substitutions.COMMIT_SHA)" --project $project) || exit 1
+          echo $nth_successful_commit
+        }
+
+        apply_trigger_name=$_APPLY_TRRIGER_NAME
+
+        project=$PROJECT_ID
+
+        previous_commit_sha=$(nth_successful_commit 1 $apply_trigger_name $project $_TRRIGER_ID) || exit 1
+
+        commit_sha=$COMMIT_SHA 
+
+        files=($(git diff --name-only ${previous_commit_sha} ${commit_sha})) || exit 1
+        echo "変更のあったファイルは、${files[@]}です"
+
+        for file in ${files[@]}; do
+            if [ $file = 'cloudbuild.yaml' ]; then
+                :
+            else
+                echo $file
+                bq query --use_legacy_sql=false < $file #デプロイコマンド
+            fi
+        done
+substitutions:
+  _TRRIGER_ID: "" #トリガーID
+  _APPLY_TRRIGER_NAME: "" #トリガー名
